@@ -1,18 +1,12 @@
 # -*- coding: utf-8 -*-
 from functools import partial
-from typing import List
 
 import numpy as np
+from sklearn.base import BaseEstimator, MetaEstimatorMixin, clone, is_classifier
+from sklearn.metrics import check_scoring
 from sklearn.model_selection import check_cv
-from sklearn.utils.metaestimators import if_delegate_has_method
 from sklearn.utils import check_array, check_random_state
-from sklearn.base import (
-    BaseEstimator,
-    MetaEstimatorMixin,
-    clone,
-    is_classifier
-)
-from sklearn.metrics.scorer import check_scoring
+from sklearn.utils.metaestimators import available_if
 
 from eli5.permutation_importance import get_score_importances
 from eli5.sklearn.utils import pandas_available
@@ -143,8 +137,16 @@ class PermutationImportance(BaseEstimator, MetaEstimatorMixin):
     rng_ : numpy.random.RandomState
         random state
     """
-    def __init__(self, estimator, scoring=None, n_iter=5, random_state=None,
-                 cv='prefit', refit=True):
+
+    def __init__(
+        self,
+        estimator,
+        scoring=None,
+        n_iter=5,
+        random_state=None,
+        cv="prefit",
+        refit=True,
+    ):
         # type: (...) -> None
         if isinstance(cv, str) and cv != "prefit":
             raise ValueError("Invalid cv value: {!r}".format(cv))
@@ -160,6 +162,7 @@ class PermutationImportance(BaseEstimator, MetaEstimatorMixin):
         def pd_scorer(model, X, y):
             X = pd.DataFrame(X, columns=pd_columns)
             return base_scorer(model, X, y)
+
         return pd_scorer
 
     def fit(self, X, y, groups=None, **fit_params):
@@ -214,15 +217,16 @@ class PermutationImportance(BaseEstimator, MetaEstimatorMixin):
         cv = check_cv(self.cv, y, is_classifier(self.estimator))
         feature_importances = []  # type: List
         base_scores = []  # type: List[float]
-        weights = fit_params.pop('sample_weight', None)
+        weights = fit_params.pop("sample_weight", None)
         fold_fit_params = fit_params.copy()
         for train, test in cv.split(X, y, groups):
             if weights is not None:
-                fold_fit_params['sample_weight'] = weights[train]
+                fold_fit_params["sample_weight"] = weights[train]
             est = clone(self.estimator).fit(X[train], y[train], **fold_fit_params)
             score_func = partial(self.scorer_, est)
             _base_score, _importances = self._get_score_importances(
-                score_func, X[test], y[test])
+                score_func, X[test], y[test]
+            )
             base_scores.extend([_base_score] * len(_importances))
             feature_importances.extend(_importances)
         return base_scores, feature_importances
@@ -233,13 +237,14 @@ class PermutationImportance(BaseEstimator, MetaEstimatorMixin):
         return [base_score] * len(importances), importances
 
     def _get_score_importances(self, score_func, X, y):
-        return get_score_importances(score_func, X, y, n_iter=self.n_iter,
-                                     random_state=self.rng_)
+        return get_score_importances(
+            score_func, X, y, n_iter=self.n_iter, random_state=self.rng_
+        )
 
     @property
     def caveats_(self):
         # type: () -> str
-        if self.cv == 'prefit':
+        if self.cv == "prefit":
             return CAVEATS_PREFIT
         elif self.cv is None:
             return CAVEATS_CV_NONE
@@ -247,23 +252,34 @@ class PermutationImportance(BaseEstimator, MetaEstimatorMixin):
 
     # ============= Exposed methods of a wrapped estimator:
 
-    @if_delegate_has_method(delegate='wrapped_estimator_')
+    def _estimator_has(attr):
+        """Check if we can delegate a method to the underlying estimator.
+        First, we check the fitted estimator if available, otherwise we
+        check the unfitted estimator.
+        """
+        return lambda self: (
+            hasattr(self.estimator_, attr)
+            if hasattr(self, "estimator_")
+            else hasattr(self.wrapped_estimator_, attr)
+        )
+
+    @available_if(_estimator_has("score"))
     def score(self, X, y=None, *args, **kwargs):
         return self.wrapped_estimator_.score(X, y, *args, **kwargs)
 
-    @if_delegate_has_method(delegate='wrapped_estimator_')
+    @available_if(_estimator_has("predict"))
     def predict(self, X):
         return self.wrapped_estimator_.predict(X)
 
-    @if_delegate_has_method(delegate='wrapped_estimator_')
+    @available_if(_estimator_has("predict_proba"))
     def predict_proba(self, X):
         return self.wrapped_estimator_.predict_proba(X)
 
-    @if_delegate_has_method(delegate='wrapped_estimator_')
+    @available_if(_estimator_has("predict_log_proba"))
     def predict_log_proba(self, X):
         return self.wrapped_estimator_.predict_log_proba(X)
 
-    @if_delegate_has_method(delegate='wrapped_estimator_')
+    @available_if(_estimator_has("decision_function"))
     def decision_function(self, X):
         return self.wrapped_estimator_.decision_function(X)
 

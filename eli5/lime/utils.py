@@ -1,21 +1,27 @@
 # -*- coding: utf-8 -*-
 from __future__ import absolute_import
-from typing import List, Any
 
 import numpy as np
 from scipy.stats import entropy
 from sklearn.pipeline import Pipeline
 from sklearn.utils import check_random_state, issparse
-from sklearn.utils.metaestimators import if_delegate_has_method
 from sklearn.utils import shuffle as _shuffle
+from sklearn.utils.metaestimators import available_if
 
-from eli5.utils import vstack
 from eli5.sklearn.utils import sklearn_version
+from eli5.utils import vstack
 
 
-def fit_proba(clf, X, y_proba, expand_factor=10, sample_weight=None,
-              shuffle=True, random_state=None,
-              **fit_params):
+def fit_proba(
+    clf,
+    X,
+    y_proba,
+    expand_factor=10,
+    sample_weight=None,
+    shuffle=True,
+    random_state=None,
+    **fit_params,
+):
     """
     Fit classifier ``clf`` to return probabilities close to ``y_proba``.
 
@@ -25,7 +31,9 @@ def fit_proba(clf, X, y_proba, expand_factor=10, sample_weight=None,
     Use expand_factor=None to turn it off
     (e.g. if probability scores are 0/1 in a first place).
     """
-    X, y, sample_weight = expanded_X_y_sample_weights(X, y_proba,
+    X, y, sample_weight = expanded_X_y_sample_weights(
+        X,
+        y_proba,
         expand_factor=expand_factor,
         sample_weight=sample_weight,
         shuffle=shuffle,
@@ -48,10 +56,11 @@ def with_sample_weight(clf, sample_weight, fit_params):
     return params
 
 
-def fix_multiclass_predict_proba(y_proba,          # type: np.ndarray
-                                 seen_classes,
-                                 complete_classes
-                                 ):
+def fix_multiclass_predict_proba(
+    y_proba,  # type: np.ndarray
+    seen_classes,
+    complete_classes,
+):
     # type: (...) -> np.ndarray
     """
     Add missing columns to predict_proba result.
@@ -70,10 +79,20 @@ def fix_multiclass_predict_proba(y_proba,          # type: np.ndarray
     return y_proba_fixed
 
 
+def _estimator_has(attr):
+    """Check if we can delegate a method to the underlying estimator.
+    First, we check the fitted estimator if available, otherwise we
+    check the unfitted estimator.
+    """
+    return lambda self: (
+        hasattr(self.estimator_, attr)
+        if hasattr(self, "estimator_")
+        else hasattr(self._final_estimator, attr)
+    )
+
+
 class _PipelinePatched(Pipeline):
-    # Patch from https://github.com/scikit-learn/scikit-learn/pull/7723;
-    # only needed for scikit-learn < 0.19.
-    @if_delegate_has_method(delegate='_final_estimator')
+    @available_if(_estimator_has("score"))
     def score(self, X, y=None, **score_params):
         Xt = X
         for name, transform in self.steps[:-1]:
@@ -83,7 +102,7 @@ class _PipelinePatched(Pipeline):
 
 
 def score_with_sample_weight(estimator, X, y=None, sample_weight=None):
-    if sklearn_version() < '0.19':
+    if sklearn_version() < "0.19":
         if isinstance(estimator, Pipeline) and sample_weight is not None:
             estimator = _PipelinePatched(estimator.steps)
     if sample_weight is None:
@@ -91,9 +110,9 @@ def score_with_sample_weight(estimator, X, y=None, sample_weight=None):
     return estimator.score(X, y, sample_weight=sample_weight)
 
 
-def expanded_X_y_sample_weights(X, y_proba, expand_factor=10,
-                                sample_weight=None, shuffle=True,
-                                random_state=None):
+def expanded_X_y_sample_weights(
+    X, y_proba, expand_factor=10, sample_weight=None, shuffle=True, random_state=None
+):
     """
     scikit-learn can't optimize cross-entropy directly if target
     probability values are not indicator vectors.
@@ -104,16 +123,19 @@ def expanded_X_y_sample_weights(X, y_proba, expand_factor=10,
     rng = check_random_state(random_state)
     if expand_factor:
         if sample_weight is not None:
-            X, y, sample_weight = zip(*expand_dataset(X, y_proba,
-                                                      factor=expand_factor,
-                                                      random_state=rng,
-                                                      extra_arrays=[
-                                                          sample_weight
-                                                      ]))
+            X, y, sample_weight = zip(
+                *expand_dataset(
+                    X,
+                    y_proba,
+                    factor=expand_factor,
+                    random_state=rng,
+                    extra_arrays=[sample_weight],
+                )
+            )
         else:
-            X, y = zip(*expand_dataset(X, y_proba,
-                                       factor=expand_factor,
-                                       random_state=rng))
+            X, y = zip(
+                *expand_dataset(X, y_proba, factor=expand_factor, random_state=rng)
+            )
     else:
         y = y_proba.argmax(axis=1)
 
@@ -122,8 +144,7 @@ def expanded_X_y_sample_weights(X, y_proba, expand_factor=10,
 
     if shuffle:
         if sample_weight is not None:
-            X, y, sample_weight = _shuffle(X, y, sample_weight,
-                                           random_state=rng)
+            X, y, sample_weight = _shuffle(X, y, sample_weight, random_state=rng)
         else:
             X, y = _shuffle(X, y, random_state=rng)
     return X, y, sample_weight
@@ -151,7 +172,7 @@ def rbf(distance, sigma=1.0):
     Convert distance to similarity in [0, 1] range using RBF (Gaussian)
     kernel.
     """
-    return np.exp(-distance ** 2 / (2 * sigma ** 2))
+    return np.exp(-(distance**2) / (2 * sigma**2))
 
 
 def _get_classifier_prefix(clf_or_pipeline):
@@ -166,12 +187,10 @@ def _get_classifier_prefix(clf_or_pipeline):
     'logisticregression__'
     """
     if not isinstance(clf_or_pipeline, Pipeline):
-        return ''
+        return ""
     return clf_or_pipeline.steps[-1][0] + "__"
 
 
-def mean_kl_divergence(y_proba_pred, y_proba_target,
-                       sample_weight=None, eps=1e-9):
+def mean_kl_divergence(y_proba_pred, y_proba_target, sample_weight=None, eps=1e-9):
     kl_elementwise = entropy(y_proba_target.T, y_proba_pred.T + eps)
     return np.average(kl_elementwise, weights=sample_weight)
-
